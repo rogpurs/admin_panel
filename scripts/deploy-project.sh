@@ -15,31 +15,43 @@ resolve_branch() {
   local repo="$1"
   local preferred="$2"
   if [[ -n "$preferred" ]] && git ls-remote --heads "$repo" "$preferred" | grep -q .; then
-    echo "$preferred"
-    return
+    echo "$preferred"; return
   fi
-  if git ls-remote --heads "$repo" main | grep -q .; then
-    echo "main"
-    return
-  fi
-  if git ls-remote --heads "$repo" master | grep -q .; then
-    echo "master"
-    return
-  fi
+  if git ls-remote --heads "$repo" main | grep -q .; then echo "main"; return; fi
+  if git ls-remote --heads "$repo" master | grep -q .; then echo "master"; return; fi
   echo ""
+}
+
+has_npm_script() {
+  local script_name="$1"
+  node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts['$script_name']?0:1)" >/dev/null 2>&1
+}
+
+install_and_build() {
+  local dir="$1"
+  if [[ ! -f "$dir/package.json" ]]; then
+    return
+  fi
+  echo "[deploy] npm ci in $dir"
+  cd "$dir"
+  npm ci
+  if has_npm_script build; then
+    echo "[deploy] npm run build in $dir"
+    npm run build
+  else
+    echo "[deploy] no build script in $dir"
+  fi
 }
 
 echo "[deploy] slug=$slug domain=$domain branch=$branch port=$port"
 
 if [[ ! -d "$project_dir/.git" ]]; then
-  echo "[error] project repo not found: $project_dir"
-  exit 2
+  echo "[error] project repo not found: $project_dir"; exit 2
 fi
 
 actual_branch="$(resolve_branch "$repo_url" "$branch")"
 if [[ -z "$actual_branch" ]]; then
-  echo "[error] no available branch found (tried: $branch, main, master)"
-  exit 2
+  echo "[error] no available branch found (tried: $branch, main, master)"; exit 2
 fi
 
 echo "[deploy] selected branch=$actual_branch"
@@ -47,19 +59,9 @@ git -C "$project_dir" fetch --all
 git -C "$project_dir" checkout "$actual_branch"
 git -C "$project_dir" pull --ff-only
 
-if [[ -d "$project_dir/server" ]]; then
-  echo "[deploy] build server"
-  cd "$project_dir/server"
-  npm ci
-  npm run build || true
-fi
-
-if [[ -d "$project_dir/client" ]]; then
-  echo "[deploy] build client"
-  cd "$project_dir/client"
-  npm ci
-  npm run build || true
-fi
+install_and_build "$project_dir"
+install_and_build "$project_dir/server"
+install_and_build "$project_dir/client"
 
 echo "[deploy] restart service: $service_name"
 sudo systemctl restart "$service_name"

@@ -29,6 +29,22 @@ has_npm_script() {
   node -e "const p=require('./package.json');process.exit(p.scripts&&p.scripts['$script_name']?0:1)" >/dev/null 2>&1
 }
 
+install_and_build() {
+  local dir="$1"
+  if [[ ! -f "$dir/package.json" ]]; then
+    return
+  fi
+  echo "[provision] npm ci in $dir"
+  cd "$dir"
+  npm ci
+  if has_npm_script build; then
+    echo "[provision] npm run build in $dir"
+    npm run build
+  else
+    echo "[provision] no build script in $dir"
+  fi
+}
+
 echo "[provision] slug=$slug domain=$domain branch=$branch port=$port"
 echo "[provision] project_dir=$project_dir"
 
@@ -39,7 +55,7 @@ if [[ ! "$port" =~ ^[0-9]+$ ]]; then
   echo "[error] invalid port"; exit 2
 fi
 
-# 1) 先に準備中ページを返すnginx設定を置いて公開
+# 1) 先に準備中ページを返す設定を有効化
 sudo tee "$nginx_site" > /dev/null <<NG
 server {
   listen 80;
@@ -86,22 +102,12 @@ else
   git -C "$project_dir" pull --ff-only
 fi
 
-# 2) ビルド
-if [[ -d "$project_dir/server" && -f "$project_dir/server/package.json" ]]; then
-  echo "[provision] build server"
-  cd "$project_dir/server"
-  npm ci
-  if has_npm_script build; then npm run build; fi
-fi
+# 2) 依存導入 + ビルド（root/server/client 全対応）
+install_and_build "$project_dir"
+install_and_build "$project_dir/server"
+install_and_build "$project_dir/client"
 
-if [[ -d "$project_dir/client" && -f "$project_dir/client/package.json" ]]; then
-  echo "[provision] build client"
-  cd "$project_dir/client"
-  npm ci
-  if has_npm_script build; then npm run build; fi
-fi
-
-# 3) 起動対象ディレクトリ決定
+# 3) 起動ディレクトリ決定
 working_dir=""
 if [[ -f "$project_dir/server/package.json" ]]; then
   working_dir="$project_dir/server"
@@ -136,6 +142,6 @@ UNIT
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$service_name"
 sudo systemctl restart "$service_name"
-sudo systemctl status "$service_name" --no-pager -l | sed -n '1,20p'
+sudo systemctl status "$service_name" --no-pager -l | sed -n '1,30p'
 
 echo "[provision] done"

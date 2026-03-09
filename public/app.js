@@ -68,28 +68,28 @@ const clearProjectForm = () => {
 const projectMap = new Map();
 
 const refreshProjectSelectors = (projects) => {
-  const target = el('chat-project-id');
-  const current = target.value;
-  target.innerHTML = '<option value="">(未選択)</option>';
+  const chatTarget = el('chat-project-id');
+  const current = chatTarget.value;
+  chatTarget.innerHTML = '<option value="">(未選択)</option>';
   projects.forEach((p) => {
     const opt = document.createElement('option');
     opt.value = String(p.id);
     opt.textContent = `${p.name} (${p.slug})`;
-    target.appendChild(opt);
+    chatTarget.appendChild(opt);
   });
-  target.value = current;
+  chatTarget.value = current;
 
   const quick = el('terminal-project-quick');
   quick.innerHTML = '';
   projects.forEach((p) => {
     const b = document.createElement('button');
     b.className = 'ghost';
-    b.textContent = p.slug;
+    b.textContent = `cd ${p.slug}`;
     b.onclick = async () => {
       try {
         const r = await request('/api/terminal/cd-project', { method: 'POST', body: JSON.stringify({ projectId: p.id }) });
         el('terminal-cwd').textContent = r.cwd;
-        el('terminal-msg').textContent = `移動: ${p.slug}`;
+        appendTerminalLine(`${r.prompt} cd ${p.slug}\n${r.message}\n`);
       } catch (e) {
         el('terminal-msg').textContent = e.message;
       }
@@ -238,16 +238,25 @@ const loadMonitor = async () => {
 const loadConfig = async () => {
   const cfg = await request('/api/config');
   el('feature-flags').textContent = `AI: ${cfg.aiEnabled ? 'ON' : 'OFF'} / Terminal: ${cfg.terminalEnabled ? 'ON' : 'OFF'}`;
-  if (!cfg.terminalEnabled) {
-    el('terminal-msg').textContent = 'TERMINAL_ENABLED=false のため実行不可';
-  }
+  if (!cfg.terminalEnabled) el('terminal-msg').textContent = 'TERMINAL_ENABLED=false のため実行不可';
 };
 
-const loadTerminalCwd = async () => {
-  try {
-    const r = await request('/api/terminal/cwd');
-    el('terminal-cwd').textContent = r.cwd;
-  } catch (_) {}
+const appendTerminalLine = (text) => {
+  const area = el('terminal-output');
+  area.textContent += text;
+  area.scrollTop = area.scrollHeight;
+};
+
+const loadTerminalState = async () => {
+  const state = await request('/api/terminal/history');
+  el('terminal-cwd').textContent = state.cwd;
+  const lines = [];
+  (state.history || []).forEach((h) => {
+    lines.push(`${h.prompt} ${h.command}`);
+    if (h.stdout) lines.push(h.stdout);
+    if (h.stderr) lines.push(h.stderr);
+  });
+  el('terminal-output').textContent = lines.join('\n') + (lines.length ? '\n' : '');
 };
 
 el('login-btn').onclick = async () => {
@@ -259,7 +268,7 @@ el('login-btn').onclick = async () => {
     token = r.token;
     localStorage.setItem('admin_token', token);
     el('auth-msg').textContent = 'ログイン成功';
-    await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig(), loadTerminalCwd()]);
+    await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig(), loadTerminalState()]);
     showView('dashboard');
   } catch (e) {
     el('auth-msg').textContent = e.message;
@@ -267,9 +276,7 @@ el('login-btn').onclick = async () => {
 };
 
 el('logout-btn').onclick = async () => {
-  try {
-    if (token) await request('/api/logout', { method: 'POST' });
-  } catch (_) {}
+  try { if (token) await request('/api/logout', { method: 'POST' }); } catch (_) {}
   token = '';
   localStorage.removeItem('admin_token');
   el('auth-msg').textContent = 'ログアウトしました';
@@ -279,7 +286,7 @@ el('create-btn').onclick = async () => {
   try {
     const result = await request('/api/projects', { method: 'POST', body: JSON.stringify(collectProjectBody()) });
     clearProjectForm();
-    el('project-msg').textContent = `プロジェクトを作成し、初期構築ジョブ #${result.autoProvisionJobId} を開始しました`;
+    el('project-msg').textContent = `作成完了。自動初期構築ジョブ #${result.autoProvisionJobId} を開始しました`;
     await Promise.all([loadProjects(), loadJobs(), loadMonitor()]);
   } catch (e) {
     el('project-msg').textContent = e.message;
@@ -288,10 +295,7 @@ el('create-btn').onclick = async () => {
 
 el('save-btn').onclick = async () => {
   const id = el('editingId').value;
-  if (!id) {
-    el('project-msg').textContent = '編集対象を選択してください';
-    return;
-  }
+  if (!id) return (el('project-msg').textContent = '編集対象を選択してください');
   try {
     await request(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(collectProjectBody()) });
     el('project-msg').textContent = '更新しました';
@@ -322,19 +326,24 @@ el('refresh-monitor').onclick = () => loadMonitor().catch((e) => (el('monitor-ms
 
 el('terminal-run-btn').onclick = async () => {
   try {
-    const command = el('terminal-command').value;
+    const command = el('terminal-command').value.trim();
+    if (!command) return;
     const r = await request('/api/terminal/exec', { method: 'POST', body: JSON.stringify({ command }) });
-    el('terminal-msg').textContent = `exit=${r.code} / ${r.timeout ? 'TIMEOUT' : 'OK'} / ${r.durationMs}ms`;
-    el('terminal-output').textContent = [
-      `cwd: ${r.cwd}`,
-      '--- stdout ---',
-      r.stdout || '(empty)',
-      '--- stderr ---',
-      r.stderr || '(empty)'
-    ].join('\n');
+    appendTerminalLine(`${r.prompt} ${command}\n${r.stdout || ''}${r.stderr || ''}\n`);
     el('terminal-cwd').textContent = r.cwd;
+    el('terminal-msg').textContent = `exit=${r.code} / ${r.timeout ? 'TIMEOUT' : 'OK'} / ${r.durationMs}ms`;
+    el('terminal-command').value = '';
   } catch (e) {
     el('terminal-msg').textContent = e.message;
+  }
+};
+
+el('self-update-btn').onclick = async () => {
+  try {
+    const r = await request('/api/admin/self-update', { method: 'POST' });
+    el('self-update-msg').textContent = `${r.message} (job #${r.jobId})`;
+  } catch (e) {
+    el('self-update-msg').textContent = e.message;
   }
 };
 
@@ -349,29 +358,26 @@ document.body.addEventListener('click', async (ev) => {
       const target = projectMap.get(String(id));
       if (!target) return;
       fillProjectForm(target);
-      showView('projects');
-      return;
+      return showView('projects');
     }
 
     if (action === 'deploy') {
       await request(`/api/projects/${id}/deploy`, { method: 'POST' });
       await loadJobs();
-      showView('jobs');
-      return;
+      return showView('jobs');
     }
 
     if (action === 'provision') {
       await request(`/api/projects/${id}/provision`, { method: 'POST' });
       await loadJobs();
-      showView('jobs');
-      return;
+      return showView('jobs');
     }
 
     if (action === 'delete') {
-      const ok = window.confirm('このプロジェクトを完全削除します。ディレクトリ/サービス/nginx設定を削除します。続行しますか？');
+      const ok = window.confirm('このプロジェクトを完全削除します。続行しますか？');
       if (!ok) return;
       await request(`/api/projects/${id}`, { method: 'DELETE' });
-      await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadTerminalCwd()]);
+      await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadTerminalState()]);
       el('project-msg').textContent = '削除ジョブを開始しました';
       return;
     }
@@ -422,7 +428,7 @@ el('chat-send').onclick = async () => {
 };
 
 if (token) {
-  Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig(), loadTerminalCwd()]).catch(() => {
+  Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig(), loadTerminalState()]).catch(() => {
     el('auth-msg').textContent = '再ログインしてください';
   });
 }

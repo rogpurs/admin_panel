@@ -68,7 +68,7 @@
             <h3>新規作成 / 編集</h3>
             <button id="add-main-btn" class="ghost">メインドメインを追加</button>
           </div>
-          <p class="hint">`初期構築` でディレクトリ作成・Git clone・systemd/nginx反映、`アップデート` でpull/build/restartを実行します。</p>
+          <p class="hint">作成すると自動で初期構築を開始し、対象ドメインには「準備中」画面を表示します。</p>
           <input id="editingId" type="hidden" />
           <div class="grid">
             <input id="name" placeholder="表示名 (例: 貯金アプリ)" />
@@ -80,7 +80,7 @@
             <input id="serviceName" placeholder="service名 (任意, 例: chokin-app.service)" />
           </div>
           <div class="toolbar">
-            <button id="create-btn">作成</button>
+            <button id="create-btn">作成（自動初期構築）</button>
             <button id="save-btn" class="ghost">更新保存</button>
             <button id="clear-form-btn" class="ghost">入力クリア</button>
             <span id="project-msg" class="msg"></span>
@@ -114,14 +114,14 @@
       <section id="view-terminal" class="panel">
         <h2>オンラインターミナル</h2>
         <div class="card">
-          <p class="hint">危険なコマンドはブロックされます。`TERMINAL_ENABLED=true` の時のみ実行できます。`cd` はこの画面内でディレクトリを保持します。</p>
+          <p class="hint">`cd`はセッション内で保持されます。危険なコマンドはブロックされます。</p>
           <div class="toolbar">
             <span class="msg">現在のディレクトリ:</span>
             <code id="terminal-cwd">-</code>
           </div>
           <div id="terminal-project-quick" class="toolbar"></div>
           <div class="toolbar">
-            <input id="terminal-command" placeholder="例: ls -la /home/s55mz/apps" />
+            <input id="terminal-command" placeholder="例: ls -la" />
             <button id="terminal-run-btn">実行</button>
           </div>
           <div class="toolbar">
@@ -134,7 +134,7 @@
               <span class="dot green"></span>
               <span class="title">Terminal</span>
             </div>
-            <pre id="terminal-output">ここに出力が表示されます。</pre>
+            <pre id="terminal-output"></pre>
           </div>
         </div>
       </section>
@@ -145,11 +145,14 @@
           <h3>よくあるエラーと対処</h3>
           <ul>
             <li><strong>project repo not found</strong>: 先に `初期構築` を実行してください。</li>
-            <li><strong>Host key verification failed</strong>: repo URLをHTTPSに変更、またはラズパイへSSH鍵登録。</li>
-            <li><strong>Remote branch main not found</strong>: `master` を指定、または自動判定を利用。</li>
-            <li><strong>sudo権限エラー</strong>: `scripts/*.sh` 実行用の `sudoers` 設定が必要。</li>
-            <li><strong>502</strong>: 対象サービス停止 or nginx設定競合。ジョブログ + `systemctl status` を確認。</li>
+            <li><strong>Cannot find module</strong>: 依存が未導入です。最新版では自動 `npm ci` 済み。</li>
+            <li><strong>Remote branch main not found</strong>: 自動で `main/master` 判定します。</li>
+            <li><strong>502</strong>: upstream落ち。対象serviceの状態確認が必要。</li>
           </ul>
+          <div class="toolbar">
+            <button id="self-update-btn" class="ghost">管理パネルをアップデート</button>
+            <span id="self-update-msg" class="msg"></span>
+          </div>
         </div>
       </section>
 
