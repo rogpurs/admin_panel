@@ -11,6 +11,24 @@ APPS_ROOT="${APPS_ROOT:-/home/s55mz/apps}"
 project_dir="$APPS_ROOT/$slug"
 service_name="${slug}.service"
 
+resolve_branch() {
+  local repo="$1"
+  local preferred="$2"
+  if [[ -n "$preferred" ]] && git ls-remote --heads "$repo" "$preferred" | grep -q .; then
+    echo "$preferred"
+    return
+  fi
+  if git ls-remote --heads "$repo" main | grep -q .; then
+    echo "main"
+    return
+  fi
+  if git ls-remote --heads "$repo" master | grep -q .; then
+    echo "master"
+    return
+  fi
+  echo ""
+}
+
 echo "[deploy] slug=$slug domain=$domain branch=$branch port=$port"
 
 if [[ ! -d "$project_dir/.git" ]]; then
@@ -18,8 +36,15 @@ if [[ ! -d "$project_dir/.git" ]]; then
   exit 2
 fi
 
+actual_branch="$(resolve_branch "$repo_url" "$branch")"
+if [[ -z "$actual_branch" ]]; then
+  echo "[error] no available branch found (tried: $branch, main, master)"
+  exit 2
+fi
+
+echo "[deploy] selected branch=$actual_branch"
 git -C "$project_dir" fetch --all
-git -C "$project_dir" checkout "$branch"
+git -C "$project_dir" checkout "$actual_branch"
 git -C "$project_dir" pull --ff-only
 
 if [[ -d "$project_dir/server" ]]; then

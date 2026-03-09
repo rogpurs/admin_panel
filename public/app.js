@@ -29,29 +29,70 @@ document.querySelectorAll('.menu').forEach((btn) => {
 
 const badge = (state) => {
   const s = String(state || '').toLowerCase();
-  if (s === 'active') return `<span class="badge ok">${state}</span>`;
-  if (s === 'inactive' || s === 'activating') return `<span class="badge warn">${state}</span>`;
+  if (s === 'active' || s === 'success') return `<span class="badge ok">${state}</span>`;
+  if (s === 'inactive' || s === 'activating' || s === 'running') return `<span class="badge warn">${state}</span>`;
   return `<span class="badge err">${state || 'unknown'}</span>`;
 };
+
+const setGauge = (id, textId, percent, suffix = '%') => {
+  const value = Math.max(0, Math.min(100, Number(percent || 0)));
+  const gauge = el(id);
+  const text = el(textId);
+  gauge.style.setProperty('--p', value.toFixed(2));
+  text.textContent = `${value.toFixed(1)}${suffix}`;
+};
+
+const fillProjectForm = (p) => {
+  el('editingId').value = p.id;
+  el('name').value = p.name || '';
+  el('slug').value = p.slug || '';
+  el('domain').value = p.domain || '';
+  el('repoUrl').value = p.repoUrl || '';
+  el('branch').value = p.branch || 'main';
+  el('port').value = p.port || '';
+  el('serviceName').value = p.serviceName || '';
+  el('project-msg').textContent = `編集中: ${p.name}`;
+};
+
+const clearProjectForm = () => {
+  el('editingId').value = '';
+  el('name').value = '';
+  el('slug').value = '';
+  el('domain').value = '';
+  el('repoUrl').value = '';
+  el('branch').value = 'main';
+  el('port').value = '';
+  el('serviceName').value = '';
+};
+
+const projectMap = new Map();
 
 const renderProjects = (projects) => {
   const root = el('projects');
   root.innerHTML = '';
+  projectMap.clear();
+
   if (!projects.length) {
     root.innerHTML = '<p class="msg">プロジェクトがまだありません。</p>';
     return;
   }
+
   projects.forEach((p) => {
+    projectMap.set(String(p.id), p);
+    const status = p.status || {};
     const d = document.createElement('div');
     d.className = 'item';
     d.innerHTML = `
-      <strong>${p.name}</strong> <small>${p.slug}</small><br>
+      <strong>${p.name}${p.isMain ? ' (MAIN)' : ''}</strong> <small>${p.slug}</small><br>
       domain: ${p.domain} / port: ${p.port}<br>
-      repo: ${p.repoUrl} (${p.branch})<br>
-      service: ${p.serviceName || `${p.slug}.service`}
+      repo: ${p.repoUrl || '(未設定)'} (${p.branch || '-'})<br>
+      service: ${p.serviceName || `${p.slug}.service`}<br>
+      status: ${badge(status.serviceState || 'unknown')} / dir: ${status.directoryExists ? 'yes' : 'no'} / git: ${status.gitReady ? 'yes' : 'no'}
       <div class="toolbar">
+        <button data-action="edit" data-id="${p.id}" class="ghost">編集</button>
         <button data-action="provision" data-id="${p.id}" class="ghost">初期構築</button>
         <button data-action="deploy" data-id="${p.id}">アップデート</button>
+        <button data-action="delete" data-id="${p.id}" class="danger">削除</button>
       </div>
     `;
     root.appendChild(d);
@@ -69,7 +110,7 @@ const renderJobs = (jobs) => {
     const d = document.createElement('div');
     d.className = 'item';
     d.innerHTML = `
-      <strong>#${j.id}</strong> ${j.type} / ${j.status} / project=${j.projectId}
+      <strong>#${j.id}</strong> ${j.type} / ${badge(j.status)} / project=${j.projectSlug || j.projectId}
       <div><small>開始: ${fmtDate(j.startedAt)} / 終了: ${fmtDate(j.finishedAt)} / code: ${j.exitCode ?? '-'}</small></div>
       <div class="toolbar"><button data-action="log" data-id="${j.id}" class="ghost">ログ表示</button></div>
     `;
@@ -78,9 +119,18 @@ const renderJobs = (jobs) => {
 };
 
 const renderMonitor = (m) => {
+  const cores = Number(m.cpu.cores || 1);
+  const load1 = Number(m.cpu.loadavg?.[0] || 0);
+  const cpuLoad = Math.min(100, (load1 / cores) * 100);
+
+  setGauge('gauge-memory', 'gauge-memory-text', m.memory.usagePercent || 0);
+  setGauge('gauge-disk', 'gauge-disk-text', m.disk.usagePercent || 0);
+  setGauge('gauge-cpu', 'gauge-cpu-text', cpuLoad || 0);
+
   el('mon-host').textContent =
 `hostname: ${m.host.hostname}
 platform: ${m.host.platform} ${m.host.release}
+ips: ${(m.host.ips || []).join(', ') || '-'}
 uptime: ${m.host.uptimePretty || `${m.host.uptimeSec} sec`}
 now: ${m.now}`;
 
@@ -103,8 +153,23 @@ usage: ${m.memory.usagePercent}%`;
 cloudflared: ${badge(m.services.cloudflared)}
 admin-panel: ${badge(m.services.adminPanel)}`;
 
-  el('mon-count').textContent = `projects: ${m.counters.projects}\njobs: ${m.counters.jobs}`;
+  el('mon-count').textContent =
+`projects: ${m.counters.projects}
+jobs: ${m.counters.jobs}
+running_jobs: ${m.counters.runningJobs}`;
+
+  el('monitor-msg').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 };
+
+const collectProjectBody = () => ({
+  name: el('name').value,
+  slug: el('slug').value,
+  domain: el('domain').value,
+  repoUrl: el('repoUrl').value,
+  branch: el('branch').value || 'main',
+  port: Number(el('port').value),
+  serviceName: el('serviceName').value || undefined
+});
 
 const loadProjects = async () => {
   const data = await request('/api/projects');
@@ -119,7 +184,6 @@ const loadJobs = async () => {
 const loadMonitor = async () => {
   const data = await request('/api/monitor');
   renderMonitor(data);
-  el('monitor-msg').textContent = `最終更新: ${new Date().toLocaleTimeString()}`;
 };
 
 el('login-btn').onclick = async () => {
@@ -149,17 +213,40 @@ el('logout-btn').onclick = async () => {
 
 el('create-btn').onclick = async () => {
   try {
-    const body = {
-      name: el('name').value,
-      slug: el('slug').value,
-      domain: el('domain').value,
-      repoUrl: el('repoUrl').value,
-      branch: el('branch').value || 'main',
-      port: Number(el('port').value)
-    };
-    await request('/api/projects', { method: 'POST', body: JSON.stringify(body) });
+    await request('/api/projects', { method: 'POST', body: JSON.stringify(collectProjectBody()) });
+    clearProjectForm();
     el('project-msg').textContent = 'プロジェクトを作成しました';
     await Promise.all([loadProjects(), loadMonitor()]);
+  } catch (e) {
+    el('project-msg').textContent = e.message;
+  }
+};
+
+el('save-btn').onclick = async () => {
+  const id = el('editingId').value;
+  if (!id) {
+    el('project-msg').textContent = '編集対象を選択してください';
+    return;
+  }
+  try {
+    await request(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(collectProjectBody()) });
+    el('project-msg').textContent = '更新しました';
+    await loadProjects();
+  } catch (e) {
+    el('project-msg').textContent = e.message;
+  }
+};
+
+el('clear-form-btn').onclick = () => {
+  clearProjectForm();
+  el('project-msg').textContent = '入力をクリアしました';
+};
+
+el('add-main-btn').onclick = async () => {
+  try {
+    await request('/api/projects/bootstrap-main', { method: 'POST', body: JSON.stringify({}) });
+    el('project-msg').textContent = 'メインドメインを追加しました';
+    await loadProjects();
   } catch (e) {
     el('project-msg').textContent = e.message;
   }
@@ -174,20 +261,43 @@ document.body.addEventListener('click', async (ev) => {
   if (!btn) return;
   const action = btn.dataset.action;
   const id = btn.dataset.id;
+
   try {
+    if (action === 'edit') {
+      const target = projectMap.get(String(id));
+      if (!target) return;
+      fillProjectForm(target);
+      showView('projects');
+      return;
+    }
+
     if (action === 'deploy') {
       await request(`/api/projects/${id}/deploy`, { method: 'POST' });
       await loadJobs();
       showView('jobs');
+      return;
     }
+
     if (action === 'provision') {
       await request(`/api/projects/${id}/provision`, { method: 'POST' });
       await loadJobs();
       showView('jobs');
+      return;
     }
+
+    if (action === 'delete') {
+      const ok = window.confirm('このプロジェクトを削除します。サービス・nginx設定を削除し、ディレクトリは退避します。実行しますか？');
+      if (!ok) return;
+      await request(`/api/projects/${id}?purgeDir=1`, { method: 'DELETE' });
+      await Promise.all([loadProjects(), loadJobs(), loadMonitor()]);
+      el('project-msg').textContent = '削除ジョブを開始しました';
+      return;
+    }
+
     if (action === 'log') {
       const txt = await request(`/api/jobs/${id}/log`);
       el('job-log').textContent = txt;
+      return;
     }
   } catch (e) {
     el('job-log').textContent = e.message;
@@ -204,4 +314,5 @@ if (token) {
 setInterval(() => {
   if (!token) return;
   loadMonitor().catch(() => {});
+  loadJobs().catch(() => {});
 }, 10000);

@@ -17,6 +17,7 @@
         <button class="menu active" data-view="dashboard">ダッシュボード</button>
         <button class="menu" data-view="projects">プロジェクト管理</button>
         <button class="menu" data-view="jobs">ジョブログ</button>
+        <button class="menu" data-view="help">使い方</button>
         <button class="menu" data-view="auth">ログイン</button>
       </nav>
       <div class="sidebar-foot">
@@ -31,6 +32,22 @@
           <button id="refresh-monitor" class="ghost">更新</button>
           <span id="monitor-msg" class="msg"></span>
         </div>
+
+        <div class="gauge-grid">
+          <article class="card gauge-card">
+            <h3>メモリ使用率</h3>
+            <div class="gauge" id="gauge-memory" style="--p:0"><span id="gauge-memory-text">0%</span></div>
+          </article>
+          <article class="card gauge-card">
+            <h3>ディスク使用率</h3>
+            <div class="gauge" id="gauge-disk" style="--p:0"><span id="gauge-disk-text">0%</span></div>
+          </article>
+          <article class="card gauge-card">
+            <h3>CPUロード目安</h3>
+            <div class="gauge" id="gauge-cpu" style="--p:0"><span id="gauge-cpu-text">0%</span></div>
+          </article>
+        </div>
+
         <div class="cards">
           <article class="card"><h3>ホスト</h3><pre id="mon-host">-</pre></article>
           <article class="card"><h3>CPU</h3><pre id="mon-cpu">-</pre></article>
@@ -43,24 +60,33 @@
 
       <section id="view-projects" class="panel">
         <h2>プロジェクト管理</h2>
+
         <div class="card">
-          <h3>新規プロジェクト作成</h3>
+          <div class="toolbar between">
+            <h3>新規作成 / 編集</h3>
+            <button id="add-main-btn" class="ghost">メインドメインを追加</button>
+          </div>
+          <p class="hint">`初期構築` でディレクトリ作成・Git clone・systemd/nginx反映を行います。`アップデート` は pull/build/restart を実行します。</p>
+          <input id="editingId" type="hidden" />
           <div class="grid">
             <input id="name" placeholder="表示名 (例: 貯金アプリ)" />
             <input id="slug" placeholder="slug (例: chokin-app)" />
             <input id="domain" placeholder="domain (例: chokin.finance-pro.space)" />
-            <input id="repoUrl" placeholder="Git URL (git@github.com:... )" />
+            <input id="repoUrl" placeholder="Git URL (https://github.com/... または git@... )" />
             <input id="branch" placeholder="branch" value="main" />
             <input id="port" placeholder="port (例: 3201)" type="number" />
+            <input id="serviceName" placeholder="service名 (任意, 例: chokin-app.service)" />
           </div>
           <div class="toolbar">
             <button id="create-btn">作成</button>
+            <button id="save-btn" class="ghost">更新保存</button>
+            <button id="clear-form-btn" class="ghost">入力クリア</button>
             <span id="project-msg" class="msg"></span>
           </div>
         </div>
 
         <div class="card">
-          <div class="toolbar">
+          <div class="toolbar between">
             <h3>プロジェクト一覧</h3>
             <button id="refresh-projects" class="ghost">再取得</button>
           </div>
@@ -71,7 +97,7 @@
       <section id="view-jobs" class="panel">
         <h2>ジョブログ</h2>
         <div class="card">
-          <div class="toolbar">
+          <div class="toolbar between">
             <h3>ジョブ一覧</h3>
             <button id="refresh-jobs" class="ghost">再取得</button>
           </div>
@@ -80,6 +106,19 @@
         <div class="card">
           <h3>ログ詳細</h3>
           <pre id="job-log">ログを選択してください。</pre>
+        </div>
+      </section>
+
+      <section id="view-help" class="panel">
+        <h2>使い方ガイド</h2>
+        <div class="card">
+          <h3>よくあるエラーと対処</h3>
+          <ul>
+            <li><strong>Host key verification failed</strong>: repo URLをHTTPSに変更するか、ラズパイにGitHub SSH鍵を登録。</li>
+            <li><strong>Remote branch main not found</strong>: ブランチを `master` に変更。未指定なら自動で `main/master` を判定。</li>
+            <li><strong>sudo権限エラー</strong>: `scripts/*.sh` 実行用に `sudoers` の最小権限を付与。</li>
+            <li><strong>502</strong>: 対象サービス停止、または nginx 設定競合。ジョブログと `systemctl status` を確認。</li>
+          </ul>
         </div>
       </section>
 

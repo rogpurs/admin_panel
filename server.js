@@ -9,6 +9,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 3100);
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-me-strong-password';
+const APPS_ROOT = process.env.APPS_ROOT || '/home/s55mz/apps';
 
 const baseDir = __dirname;
 const dataDir = path.join(baseDir, 'data');
@@ -22,11 +23,81 @@ for (const dir of [dataDir, logsDir]) {
 
 const sessions = new Map();
 
-const loadStore = () => {
-  if (!fs.existsSync(storePath)) {
+const nowIso = () => new Date().toISOString();
+
+const safeExec = (cmd, args = []) => {
+  try {
+    return execFileSync(cmd, args, { encoding: 'utf-8' }).trim();
+  } catch (_e) {
+    return '';
+  }
+};
+
+const serviceState = (name) => {
+  if (!name) return 'unknown';
+  const out = safeExec('systemctl', ['is-active', name]);
+  return out || 'unknown';
+};
+
+const parseDiskUsagePercent = (dfRootText) => {
+  const lines = String(dfRootText || '').split('\n').filter(Boolean);
+  if (lines.length < 2) return null;
+  const cols = lines[1].trim().split(/\s+/);
+  const p = cols.find((c) => c.endsWith('%'));
+  if (!p) return null;
+  const n = Number(p.replace('%', ''));
+  return Number.isFinite(n) ? n : null;
+};
+
+const ensureStoreShape = (store) => {
+  if (!store || typeof store !== 'object') {
     return { projects: [], jobs: [] };
   }
-  return JSON.parse(fs.readFileSync(storePath, 'utf-8'));
+  if (!Array.isArray(store.projects)) store.projects = [];
+  if (!Array.isArray(store.jobs)) store.jobs = [];
+  return store;
+};
+
+const ensureMainProject = (store) => {
+  if (process.env.MAIN_PROJECT_ENABLED === 'false') return false;
+  const mainDomain = process.env.MAIN_PROJECT_DOMAIN || 'finance-pro.space';
+  const mainSlug = process.env.MAIN_PROJECT_SLUG || 'finance-pro-main';
+  const mainService = process.env.MAIN_PROJECT_SERVICE || 'finance-pro-main.service';
+  const mainPort = Number(process.env.MAIN_PROJECT_PORT || 3001);
+  const mainRepoUrl = process.env.MAIN_PROJECT_REPO_URL || '';
+  const mainBranch = process.env.MAIN_PROJECT_BRANCH || 'main';
+
+  if (store.projects.some((p) => p.isMain || p.domain === mainDomain)) return false;
+
+  store.projects.push({
+    id: Date.now(),
+    name: 'メインドメイン',
+    slug: mainSlug,
+    domain: mainDomain,
+    repoUrl: mainRepoUrl,
+    branch: mainBranch,
+    port: mainPort,
+    serviceName: mainService,
+    isMain: true,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  });
+  return true;
+};
+
+const loadStore = () => {
+  let store;
+  if (!fs.existsSync(storePath)) {
+    store = { projects: [], jobs: [] };
+  } else {
+    store = JSON.parse(fs.readFileSync(storePath, 'utf-8'));
+  }
+  store = ensureStoreShape(store);
+  const changed = ensureMainProject(store);
+  if (changed) {
+    fs.writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8');
+  }
+  return store;
 };
 
 const saveStore = (store) => {
@@ -46,18 +117,17 @@ const auth = (req, res, next) => {
 const isSafeSlug = (v) => /^[a-z0-9][a-z0-9-]{1,39}$/.test(v);
 const isSafeDomain = (v) => /^[a-z0-9][a-z0-9.-]+$/.test(v) && !v.includes('..');
 
-const safeExec = (cmd, args = []) => {
-  try {
-    return execFileSync(cmd, args, { encoding: 'utf-8' }).trim();
-  } catch (_e) {
-    return '';
-  }
-};
-
-const serviceState = (name) => {
-  if (!name) return 'unknown';
-  const out = safeExec('systemctl', ['is-active', name]);
-  return out || 'unknown';
+const makeProjectStatus = (project) => {
+  const dir = path.join(APPS_ROOT, project.slug);
+  const dirExists = fs.existsSync(dir);
+  const gitExists = fs.existsSync(path.join(dir, '.git'));
+  const svc = serviceState(project.serviceName || `${project.slug}.service`);
+  return {
+    serviceState: svc,
+    directoryExists: dirExists,
+    gitReady: gitExists,
+    provisioned: dirExists || svc === 'active'
+  };
 };
 
 const updateJob = (jobId, patch) => {
@@ -69,32 +139,38 @@ const updateJob = (jobId, patch) => {
   }
 };
 
-const runScriptJob = (project, type) => {
+const runScriptJob = (project, type, extraArgs = []) => {
   const store = loadStore();
   const job = {
     id: Date.now(),
     projectId: project.id,
+    projectSlug: project.slug,
     type,
     status: 'running',
     logFile: path.join(logsDir, `${Date.now()}-${project.slug}-${type}.log`),
-    startedAt: new Date().toISOString(),
+    startedAt: nowIso(),
     finishedAt: null,
     exitCode: null
   };
   store.jobs.push(job);
   saveStore(store);
 
-  const scriptName = type === 'provision' ? 'provision-project.sh' : 'deploy-project.sh';
-  const scriptPath = path.join(scriptsDir, scriptName);
+  const scriptMap = {
+    provision: 'provision-project.sh',
+    deploy: 'deploy-project.sh',
+    remove: 'remove-project.sh'
+  };
+
+  const scriptPath = path.join(scriptsDir, scriptMap[type]);
   const logStream = fs.createWriteStream(job.logFile, { flags: 'a' });
 
   if (!fs.existsSync(scriptPath)) {
-    logStream.write(`[${new Date().toISOString()}] script not found: ${scriptPath}\n`);
+    logStream.write(`[${nowIso()}] script not found: ${scriptPath}\n`);
     logStream.end();
     updateJob(job.id, {
       status: 'failed',
       exitCode: 127,
-      finishedAt: new Date().toISOString()
+      finishedAt: nowIso()
     });
     return job;
   }
@@ -104,26 +180,27 @@ const runScriptJob = (project, type) => {
     project.domain,
     project.repoUrl,
     project.branch,
-    String(project.port)
+    String(project.port),
+    ...(extraArgs || [])
   ];
 
   const child = spawn('bash', [scriptPath, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      APPS_ROOT: process.env.APPS_ROOT || '/home/s55mz/apps'
+      APPS_ROOT
     }
   });
 
   child.stdout.on('data', (buf) => logStream.write(buf));
   child.stderr.on('data', (buf) => logStream.write(buf));
   child.on('close', (code) => {
-    logStream.write(`\n[${new Date().toISOString()}] exited with code ${code}\n`);
+    logStream.write(`\n[${nowIso()}] exited with code ${code}\n`);
     logStream.end();
     updateJob(job.id, {
       status: code === 0 ? 'success' : 'failed',
       exitCode: code,
-      finishedAt: new Date().toISOString()
+      finishedAt: nowIso()
     });
   });
 
@@ -134,7 +211,7 @@ app.use(express.json({ limit: '100kb' }));
 app.use(express.static(path.join(baseDir, 'public')));
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', app: 'admin-panel', now: new Date().toISOString() });
+  res.json({ status: 'ok', app: 'admin-panel', now: nowIso() });
 });
 
 app.post('/api/login', (req, res) => {
@@ -156,11 +233,43 @@ app.post('/api/logout', auth, (req, res) => {
 
 app.get('/api/projects', auth, (_req, res) => {
   const store = loadStore();
-  res.json(store.projects);
+  const projects = store.projects.map((p) => ({ ...p, status: makeProjectStatus(p) }));
+  res.json(projects);
+});
+
+app.post('/api/projects/bootstrap-main', auth, (req, res) => {
+  const body = req.body || {};
+  const domain = body.domain || 'finance-pro.space';
+  const slug = body.slug || 'finance-pro-main';
+  const serviceName = body.serviceName || 'finance-pro-main.service';
+  const port = Number(body.port || 3001);
+
+  const store = loadStore();
+  if (store.projects.some((p) => p.domain === domain || p.isMain)) {
+    res.status(409).json({ error: 'メインドメインのプロジェクトは既に登録済みです' });
+    return;
+  }
+
+  const project = {
+    id: Date.now(),
+    name: body.name || 'メインドメイン',
+    slug,
+    domain,
+    repoUrl: body.repoUrl || '',
+    branch: body.branch || 'main',
+    port,
+    serviceName,
+    isMain: true,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
+  };
+  store.projects.push(project);
+  saveStore(store);
+  res.status(201).json({ ...project, status: makeProjectStatus(project) });
 });
 
 app.post('/api/projects', auth, (req, res) => {
-  const { name, slug, domain, repoUrl, branch = 'main', port } = req.body || {};
+  const { name, slug, domain, repoUrl, branch = 'main', port, serviceName } = req.body || {};
   if (!name || !slug || !domain || !repoUrl || !port) {
     res.status(400).json({ error: 'name/slug/domain/repoUrl/port は必須です' });
     return;
@@ -194,13 +303,84 @@ app.post('/api/projects', auth, (req, res) => {
     repoUrl,
     branch,
     port: numPort,
-    serviceName: `${slug}.service`,
-    createdAt: new Date().toISOString()
+    serviceName: serviceName || `${slug}.service`,
+    isMain: false,
+    createdAt: nowIso(),
+    updatedAt: nowIso()
   };
 
   store.projects.push(project);
   saveStore(store);
-  res.status(201).json(project);
+  res.status(201).json({ ...project, status: makeProjectStatus(project) });
+});
+
+app.put('/api/projects/:id', auth, (req, res) => {
+  const id = Number(req.params.id);
+  const store = loadStore();
+  const idx = store.projects.findIndex((p) => p.id === id);
+  if (idx < 0) {
+    res.status(404).json({ error: 'プロジェクトが見つかりません' });
+    return;
+  }
+
+  const current = store.projects[idx];
+  const patch = req.body || {};
+
+  const next = {
+    ...current,
+    name: patch.name ?? current.name,
+    slug: patch.slug ?? current.slug,
+    domain: patch.domain ?? current.domain,
+    repoUrl: patch.repoUrl ?? current.repoUrl,
+    branch: patch.branch ?? current.branch,
+    port: patch.port != null ? Number(patch.port) : current.port,
+    serviceName: patch.serviceName ?? current.serviceName,
+    updatedAt: nowIso()
+  };
+
+  if (!isSafeSlug(next.slug)) {
+    res.status(400).json({ error: 'slug は英小文字・数字・ハイフンのみで指定してください' });
+    return;
+  }
+  if (!isSafeDomain(next.domain)) {
+    res.status(400).json({ error: 'domain の形式が不正です' });
+    return;
+  }
+  if (!Number.isInteger(next.port) || next.port < 1024 || next.port > 65535) {
+    res.status(400).json({ error: 'port は 1024-65535 の整数で指定してください' });
+    return;
+  }
+
+  const duplicated = store.projects.some((p, i) =>
+    i !== idx && (p.slug === next.slug || p.domain === next.domain || p.port === next.port)
+  );
+  if (duplicated) {
+    res.status(409).json({ error: 'slug/domain/port が重複しています' });
+    return;
+  }
+
+  store.projects[idx] = next;
+  saveStore(store);
+  res.json({ ...next, status: makeProjectStatus(next) });
+});
+
+app.delete('/api/projects/:id', auth, (req, res) => {
+  const id = Number(req.params.id);
+  const purgeDir = String(req.query.purgeDir || '0') === '1';
+
+  const store = loadStore();
+  const idx = store.projects.findIndex((p) => p.id === id);
+  if (idx < 0) {
+    res.status(404).json({ error: 'プロジェクトが見つかりません' });
+    return;
+  }
+
+  const project = store.projects[idx];
+  const job = runScriptJob(project, 'remove', [purgeDir ? '1' : '0']);
+  store.projects.splice(idx, 1);
+  saveStore(store);
+
+  res.json({ message: '削除ジョブを開始しました', jobId: job.id });
 });
 
 app.post('/api/projects/:id/deploy', auth, (req, res) => {
@@ -227,7 +407,7 @@ app.post('/api/projects/:id/provision', auth, (req, res) => {
 
 app.get('/api/jobs', auth, (_req, res) => {
   const store = loadStore();
-  const jobs = [...store.jobs].sort((a, b) => b.id - a.id).slice(0, 200);
+  const jobs = [...store.jobs].sort((a, b) => b.id - a.id).slice(0, 300);
   res.json(jobs);
 });
 
@@ -249,24 +429,27 @@ app.get('/api/monitor', auth, (_req, res) => {
   const store = loadStore();
   const memTotal = os.totalmem();
   const memFree = os.freemem();
-
   const diskRoot = safeExec('df', ['-h', '/']);
-  const uptime = safeExec('uptime', ['-p']) || '';
+  const diskUsagePercent = parseDiskUsagePercent(diskRoot);
+  const uptimePretty = safeExec('uptime', ['-p']) || '';
 
-  const serviceStates = {
-    nginx: serviceState('nginx'),
-    cloudflared: serviceState('cloudflared'),
-    adminPanel: serviceState('admin-panel.service')
-  };
+  const interfaces = os.networkInterfaces();
+  const ips = [];
+  Object.values(interfaces).forEach((items) => {
+    (items || []).forEach((item) => {
+      if (item.family === 'IPv4' && !item.internal) ips.push(item.address);
+    });
+  });
 
   res.json({
-    now: new Date().toISOString(),
+    now: nowIso(),
     host: {
       hostname: os.hostname(),
       platform: os.platform(),
       release: os.release(),
       uptimeSec: os.uptime(),
-      uptimePretty: uptime
+      uptimePretty,
+      ips
     },
     cpu: {
       arch: os.arch(),
@@ -281,12 +464,18 @@ app.get('/api/monitor', auth, (_req, res) => {
       usagePercent: Number((((memTotal - memFree) / memTotal) * 100).toFixed(2))
     },
     disk: {
-      dfRoot: diskRoot
+      dfRoot: diskRoot,
+      usagePercent: diskUsagePercent
     },
-    services: serviceStates,
+    services: {
+      nginx: serviceState('nginx'),
+      cloudflared: serviceState('cloudflared'),
+      adminPanel: serviceState('admin-panel.service')
+    },
     counters: {
       projects: store.projects.length,
-      jobs: store.jobs.length
+      jobs: store.jobs.length,
+      runningJobs: store.jobs.filter((j) => j.status === 'running').length
     }
   });
 });
