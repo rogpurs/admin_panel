@@ -6,7 +6,7 @@ domain="$2"
 repo_url="$3"
 branch="$4"
 port="$5"
-purge_dir="${6:-0}"
+purge_dir="${6:-1}"
 
 APPS_ROOT="${APPS_ROOT:-/home/s55mz/apps}"
 project_dir="$APPS_ROOT/$slug"
@@ -29,9 +29,8 @@ sudo systemctl reload nginx
 
 if [[ "$purge_dir" == "1" ]]; then
   if [[ -d "$project_dir" ]]; then
-    backup_dir="${project_dir}.deleted.$(date +%Y%m%d-%H%M%S)"
-    mv "$project_dir" "$backup_dir"
-    echo "[remove] moved project dir to $backup_dir"
+    echo "[remove] deleting directory: $project_dir"
+    rm -rf "$project_dir"
   fi
 fi
 

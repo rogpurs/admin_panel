@@ -66,20 +66,35 @@ const clearProjectForm = () => {
 };
 
 const projectMap = new Map();
-const jobMap = new Map();
 
 const refreshProjectSelectors = (projects) => {
-  const targets = [el('terminal-project-id'), el('chat-project-id')];
-  targets.forEach((target) => {
-    const current = target.value;
-    target.innerHTML = '<option value="">(未選択)</option>';
-    projects.forEach((p) => {
-      const opt = document.createElement('option');
-      opt.value = String(p.id);
-      opt.textContent = `${p.name} (${p.slug})`;
-      target.appendChild(opt);
-    });
-    target.value = current;
+  const target = el('chat-project-id');
+  const current = target.value;
+  target.innerHTML = '<option value="">(未選択)</option>';
+  projects.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = String(p.id);
+    opt.textContent = `${p.name} (${p.slug})`;
+    target.appendChild(opt);
+  });
+  target.value = current;
+
+  const quick = el('terminal-project-quick');
+  quick.innerHTML = '';
+  projects.forEach((p) => {
+    const b = document.createElement('button');
+    b.className = 'ghost';
+    b.textContent = p.slug;
+    b.onclick = async () => {
+      try {
+        const r = await request('/api/terminal/cd-project', { method: 'POST', body: JSON.stringify({ projectId: p.id }) });
+        el('terminal-cwd').textContent = r.cwd;
+        el('terminal-msg').textContent = `移動: ${p.slug}`;
+      } catch (e) {
+        el('terminal-msg').textContent = e.message;
+      }
+    };
+    quick.appendChild(b);
   });
 };
 
@@ -134,16 +149,12 @@ const renderProjects = (projects) => {
 const renderJobs = (jobs) => {
   const root = el('jobs');
   root.innerHTML = '';
-  jobMap.clear();
-
   if (!jobs.length) {
     root.innerHTML = '<p class="msg">ジョブはまだありません。</p>';
     refreshJobSelector([]);
     return;
   }
-
   jobs.forEach((j) => {
-    jobMap.set(String(j.id), j);
     const d = document.createElement('div');
     d.className = 'item';
     d.innerHTML = `
@@ -153,7 +164,6 @@ const renderJobs = (jobs) => {
     `;
     root.appendChild(d);
   });
-
   refreshJobSelector(jobs);
 };
 
@@ -233,6 +243,13 @@ const loadConfig = async () => {
   }
 };
 
+const loadTerminalCwd = async () => {
+  try {
+    const r = await request('/api/terminal/cwd');
+    el('terminal-cwd').textContent = r.cwd;
+  } catch (_) {}
+};
+
 el('login-btn').onclick = async () => {
   try {
     const r = await request('/api/login', {
@@ -242,7 +259,7 @@ el('login-btn').onclick = async () => {
     token = r.token;
     localStorage.setItem('admin_token', token);
     el('auth-msg').textContent = 'ログイン成功';
-    await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig()]);
+    await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig(), loadTerminalCwd()]);
     showView('dashboard');
   } catch (e) {
     el('auth-msg').textContent = e.message;
@@ -260,10 +277,10 @@ el('logout-btn').onclick = async () => {
 
 el('create-btn').onclick = async () => {
   try {
-    await request('/api/projects', { method: 'POST', body: JSON.stringify(collectProjectBody()) });
+    const result = await request('/api/projects', { method: 'POST', body: JSON.stringify(collectProjectBody()) });
     clearProjectForm();
-    el('project-msg').textContent = 'プロジェクトを作成しました';
-    await Promise.all([loadProjects(), loadMonitor()]);
+    el('project-msg').textContent = `プロジェクトを作成し、初期構築ジョブ #${result.autoProvisionJobId} を開始しました`;
+    await Promise.all([loadProjects(), loadJobs(), loadMonitor()]);
   } catch (e) {
     el('project-msg').textContent = e.message;
   }
@@ -305,11 +322,8 @@ el('refresh-monitor').onclick = () => loadMonitor().catch((e) => (el('monitor-ms
 
 el('terminal-run-btn').onclick = async () => {
   try {
-    const payload = {
-      projectId: el('terminal-project-id').value || undefined,
-      command: el('terminal-command').value
-    };
-    const r = await request('/api/terminal/exec', { method: 'POST', body: JSON.stringify(payload) });
+    const command = el('terminal-command').value;
+    const r = await request('/api/terminal/exec', { method: 'POST', body: JSON.stringify({ command }) });
     el('terminal-msg').textContent = `exit=${r.code} / ${r.timeout ? 'TIMEOUT' : 'OK'} / ${r.durationMs}ms`;
     el('terminal-output').textContent = [
       `cwd: ${r.cwd}`,
@@ -318,6 +332,7 @@ el('terminal-run-btn').onclick = async () => {
       '--- stderr ---',
       r.stderr || '(empty)'
     ].join('\n');
+    el('terminal-cwd').textContent = r.cwd;
   } catch (e) {
     el('terminal-msg').textContent = e.message;
   }
@@ -353,10 +368,10 @@ document.body.addEventListener('click', async (ev) => {
     }
 
     if (action === 'delete') {
-      const ok = window.confirm('このプロジェクトを削除します。サービス・nginx設定を削除し、ディレクトリは退避します。実行しますか？');
+      const ok = window.confirm('このプロジェクトを完全削除します。ディレクトリ/サービス/nginx設定を削除します。続行しますか？');
       if (!ok) return;
-      await request(`/api/projects/${id}?purgeDir=1`, { method: 'DELETE' });
-      await Promise.all([loadProjects(), loadJobs(), loadMonitor()]);
+      await request(`/api/projects/${id}`, { method: 'DELETE' });
+      await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadTerminalCwd()]);
       el('project-msg').textContent = '削除ジョブを開始しました';
       return;
     }
@@ -398,10 +413,7 @@ el('chat-send').onclick = async () => {
   el('chat-question').value = '';
 
   try {
-    const r = await request('/api/ai/advice', {
-      method: 'POST',
-      body: JSON.stringify({ question, projectId, jobId })
-    });
+    const r = await request('/api/ai/advice', { method: 'POST', body: JSON.stringify({ question, projectId, jobId }) });
     addChatBubble('assistant', r.answer);
     el('chat-usage').textContent = `tokens: ${r.usage.total_tokens} (p:${r.usage.prompt_tokens} / c:${r.usage.completion_tokens})`;
   } catch (e) {
@@ -410,7 +422,7 @@ el('chat-send').onclick = async () => {
 };
 
 if (token) {
-  Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig()]).catch(() => {
+  Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig(), loadTerminalCwd()]).catch(() => {
     el('auth-msg').textContent = '再ログインしてください';
   });
 }

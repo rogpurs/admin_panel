@@ -31,6 +31,7 @@ for (const dir of [dataDir, logsDir]) {
 }
 
 const sessions = new Map();
+const terminalSessions = new Map();
 
 const nowIso = () => new Date().toISOString();
 
@@ -118,6 +119,7 @@ const auth = (req, res, next) => {
     return;
   }
   req.user = sessions.get(token);
+  req.token = token;
   next();
 };
 
@@ -174,11 +176,7 @@ const runScriptJob = (project, type, extraArgs = []) => {
   if (!fs.existsSync(scriptPath)) {
     logStream.write(`[${nowIso()}] script not found: ${scriptPath}\n`);
     logStream.end();
-    updateJob(job.id, {
-      status: 'failed',
-      exitCode: 127,
-      finishedAt: nowIso()
-    });
+    updateJob(job.id, { status: 'failed', exitCode: 127, finishedAt: nowIso() });
     return job;
   }
 
@@ -273,9 +271,7 @@ const buildAiContext = ({ question, projectId, jobId }) => {
 };
 
 const askOpenAI = async (ctx) => {
-  if (!OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY が未設定です');
-  }
+  if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY が未設定です');
 
   const systemPrompt = [
     'You are a pragmatic DevOps assistant for Raspberry Pi deployment.',
@@ -329,10 +325,15 @@ const askOpenAI = async (ctx) => {
   };
 };
 
-const executeTerminalCommand = ({ command, projectId }) => {
-  if (!TERMINAL_ENABLED) {
-    throw new Error('terminal is disabled');
-  }
+const resolveTerminalCwd = (token) => {
+  const cwd = terminalSessions.get(token);
+  if (cwd && fs.existsSync(cwd)) return cwd;
+  terminalSessions.set(token, APPS_ROOT);
+  return APPS_ROOT;
+};
+
+const executeTerminalCommand = async ({ token, command }) => {
+  if (!TERMINAL_ENABLED) throw new Error('terminal is disabled');
 
   const cmd = String(command || '').trim();
   if (!cmd) throw new Error('command is required');
@@ -349,11 +350,17 @@ const executeTerminalCommand = ({ command, projectId }) => {
     throw new Error('危険なコマンドは実行できません');
   }
 
-  const store = loadStore();
-  let cwd = APPS_ROOT;
-  if (projectId) {
-    const project = store.projects.find((p) => p.id === Number(projectId));
-    if (project) cwd = path.join(APPS_ROOT, project.slug);
+  let cwd = resolveTerminalCwd(token);
+
+  const cdMatch = cmd.match(/^cd\s+(.+)$/);
+  if (cdMatch) {
+    const raw = cdMatch[1].trim();
+    const dest = raw.startsWith('/') ? raw : path.resolve(cwd, raw);
+    if (!fs.existsSync(dest) || !fs.statSync(dest).isDirectory()) {
+      return { code: 1, timeout: false, durationMs: 0, cwd, stdout: '', stderr: `cd: no such directory: ${raw}` };
+    }
+    terminalSessions.set(token, dest);
+    return { code: 0, timeout: false, durationMs: 0, cwd: dest, stdout: `changed directory to: ${dest}`, stderr: '' };
   }
 
   return new Promise((resolve, reject) => {
@@ -371,16 +378,12 @@ const executeTerminalCommand = ({ command, projectId }) => {
 
     child.stdout.on('data', (buf) => {
       stdout += buf.toString('utf-8');
-      if (stdout.length > TERMINAL_MAX_OUTPUT) {
-        stdout = stdout.slice(stdout.length - TERMINAL_MAX_OUTPUT);
-      }
+      if (stdout.length > TERMINAL_MAX_OUTPUT) stdout = stdout.slice(stdout.length - TERMINAL_MAX_OUTPUT);
     });
 
     child.stderr.on('data', (buf) => {
       stderr += buf.toString('utf-8');
-      if (stderr.length > TERMINAL_MAX_OUTPUT) {
-        stderr = stderr.slice(stderr.length - TERMINAL_MAX_OUTPUT);
-      }
+      if (stderr.length > TERMINAL_MAX_OUTPUT) stderr = stderr.slice(stderr.length - TERMINAL_MAX_OUTPUT);
     });
 
     child.on('error', (err) => {
@@ -390,14 +393,7 @@ const executeTerminalCommand = ({ command, projectId }) => {
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({
-        code,
-        timeout: killed,
-        durationMs: Date.now() - start,
-        cwd,
-        stdout,
-        stderr
-      });
+      resolve({ code, timeout: killed, durationMs: Date.now() - start, cwd, stdout, stderr });
     });
   });
 };
@@ -410,11 +406,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.get('/api/config', auth, (_req, res) => {
-  res.json({
-    aiEnabled: Boolean(OPENAI_API_KEY),
-    terminalEnabled: TERMINAL_ENABLED,
-    openaiModel: OPENAI_MODEL
-  });
+  res.json({ aiEnabled: Boolean(OPENAI_API_KEY), terminalEnabled: TERMINAL_ENABLED, openaiModel: OPENAI_MODEL });
 });
 
 app.post('/api/login', (req, res) => {
@@ -425,12 +417,15 @@ app.post('/api/login', (req, res) => {
   }
   const token = crypto.randomBytes(24).toString('hex');
   sessions.set(token, { username, at: Date.now() });
+  terminalSessions.set(token, APPS_ROOT);
   res.json({ token });
 });
 
 app.post('/api/logout', auth, (req, res) => {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (token) sessions.delete(token);
+  if (req.token) {
+    sessions.delete(req.token);
+    terminalSessions.delete(req.token);
+  }
   res.json({ message: 'ログアウトしました' });
 });
 
@@ -515,7 +510,10 @@ app.post('/api/projects', auth, (req, res) => {
 
   store.projects.push(project);
   saveStore(store);
-  res.status(201).json({ ...project, status: makeProjectStatus(project) });
+
+  // 作成時に自動で初期構築ジョブを開始
+  const job = runScriptJob(project, 'provision');
+  res.status(201).json({ ...project, status: makeProjectStatus(project), autoProvisionJobId: job.id });
 });
 
 app.put('/api/projects/:id', auth, (req, res) => {
@@ -568,8 +566,6 @@ app.put('/api/projects/:id', auth, (req, res) => {
 
 app.delete('/api/projects/:id', auth, (req, res) => {
   const id = Number(req.params.id);
-  const purgeDir = String(req.query.purgeDir || '0') === '1';
-
   const store = loadStore();
   const idx = store.projects.findIndex((p) => p.id === id);
   if (idx < 0) {
@@ -578,7 +574,7 @@ app.delete('/api/projects/:id', auth, (req, res) => {
   }
 
   const project = store.projects[idx];
-  const job = runScriptJob(project, 'remove', [purgeDir ? '1' : '0']);
+  const job = runScriptJob(project, 'remove', ['1']);
   store.projects.splice(idx, 1);
   saveStore(store);
 
@@ -691,10 +687,7 @@ app.post('/api/ai/advice', auth, async (req, res) => {
     }
     const ctx = buildAiContext({ question, projectId, jobId });
     const result = await askOpenAI(ctx);
-    res.json({
-      answer: result.message,
-      usage: result.usage
-    });
+    res.json({ answer: result.message, usage: result.usage });
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : 'AI相談に失敗しました' });
   }
@@ -702,12 +695,34 @@ app.post('/api/ai/advice', auth, async (req, res) => {
 
 app.post('/api/terminal/exec', auth, async (req, res) => {
   try {
-    const { command, projectId } = req.body || {};
-    const result = await executeTerminalCommand({ command, projectId });
+    const { command } = req.body || {};
+    const result = await executeTerminalCommand({ token: req.token, command });
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : 'terminal execution failed' });
   }
+});
+
+app.post('/api/terminal/cd-project', auth, (req, res) => {
+  const { projectId } = req.body || {};
+  const store = loadStore();
+  const project = store.projects.find((p) => p.id === Number(projectId));
+  if (!project) {
+    res.status(404).json({ error: 'プロジェクトが見つかりません' });
+    return;
+  }
+  const target = path.join(APPS_ROOT, project.slug);
+  if (!fs.existsSync(target)) {
+    res.status(404).json({ error: '対象ディレクトリが存在しません。先に初期構築してください。' });
+    return;
+  }
+  terminalSessions.set(req.token, target);
+  res.json({ cwd: target, message: `current directory changed to ${target}` });
+});
+
+app.get('/api/terminal/cwd', auth, (req, res) => {
+  const cwd = resolveTerminalCwd(req.token);
+  res.json({ cwd });
 });
 
 app.get('*', (_req, res) => {

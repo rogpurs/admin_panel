@@ -114,16 +114,28 @@
       <section id="view-terminal" class="panel">
         <h2>オンラインターミナル</h2>
         <div class="card">
-          <p class="hint">危険なコマンドはブロックされます。`TERMINAL_ENABLED=true` の時のみ実行できます。</p>
-          <div class="grid two">
-            <select id="terminal-project-id"></select>
+          <p class="hint">危険なコマンドはブロックされます。`TERMINAL_ENABLED=true` の時のみ実行できます。`cd` はこの画面内でディレクトリを保持します。</p>
+          <div class="toolbar">
+            <span class="msg">現在のディレクトリ:</span>
+            <code id="terminal-cwd">-</code>
+          </div>
+          <div id="terminal-project-quick" class="toolbar"></div>
+          <div class="toolbar">
             <input id="terminal-command" placeholder="例: ls -la /home/s55mz/apps" />
+            <button id="terminal-run-btn">実行</button>
           </div>
           <div class="toolbar">
-            <button id="terminal-run-btn">実行</button>
             <span id="terminal-msg" class="msg"></span>
           </div>
-          <pre id="terminal-output">ここに出力が表示されます。</pre>
+          <div class="terminal-window">
+            <div class="terminal-head">
+              <span class="dot red"></span>
+              <span class="dot yellow"></span>
+              <span class="dot green"></span>
+              <span class="title">Terminal</span>
+            </div>
+            <pre id="terminal-output">ここに出力が表示されます。</pre>
+          </div>
         </div>
       </section>
 
