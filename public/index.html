@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>管理パネル</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <h1>管理パネル</h1>
+        <p>finance-pro.space</p>
+      </div>
+      <nav>
+        <button class="menu active" data-view="dashboard">ダッシュボード</button>
+        <button class="menu" data-view="projects">プロジェクト管理</button>
+        <button class="menu" data-view="jobs">ジョブログ</button>
+        <button class="menu" data-view="auth">ログイン</button>
+      </nav>
+      <div class="sidebar-foot">
+        <small>Admin Panel MVP</small>
+      </div>
+    </aside>
+
+    <main class="content">
+      <section id="view-dashboard" class="panel active">
+        <h2>ラズパイ モニター</h2>
+        <div class="toolbar">
+          <button id="refresh-monitor" class="ghost">更新</button>
+          <span id="monitor-msg" class="msg"></span>
+        </div>
+        <div class="cards">
+          <article class="card"><h3>ホスト</h3><pre id="mon-host">-</pre></article>
+          <article class="card"><h3>CPU</h3><pre id="mon-cpu">-</pre></article>
+          <article class="card"><h3>メモリ</h3><pre id="mon-mem">-</pre></article>
+          <article class="card"><h3>ディスク</h3><pre id="mon-disk">-</pre></article>
+          <article class="card"><h3>サービス状態</h3><pre id="mon-svc">-</pre></article>
+          <article class="card"><h3>件数</h3><pre id="mon-count">-</pre></article>
+        </div>
+      </section>
+
+      <section id="view-projects" class="panel">
+        <h2>プロジェクト管理</h2>
+        <div class="card">
+          <h3>新規プロジェクト作成</h3>
+          <div class="grid">
+            <input id="name" placeholder="表示名 (例: 貯金アプリ)" />
+            <input id="slug" placeholder="slug (例: chokin-app)" />
+            <input id="domain" placeholder="domain (例: chokin.finance-pro.space)" />
+            <input id="repoUrl" placeholder="Git URL (git@github.com:... )" />
+            <input id="branch" placeholder="branch" value="main" />
+            <input id="port" placeholder="port (例: 3201)" type="number" />
+          </div>
+          <div class="toolbar">
+            <button id="create-btn">作成</button>
+            <span id="project-msg" class="msg"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="toolbar">
+            <h3>プロジェクト一覧</h3>
+            <button id="refresh-projects" class="ghost">再取得</button>
+          </div>
+          <div id="projects"></div>
+        </div>
+      </section>
+
+      <section id="view-jobs" class="panel">
+        <h2>ジョブログ</h2>
+        <div class="card">
+          <div class="toolbar">
+            <h3>ジョブ一覧</h3>
+            <button id="refresh-jobs" class="ghost">再取得</button>
+          </div>
+          <div id="jobs"></div>
+        </div>
+        <div class="card">
+          <h3>ログ詳細</h3>
+          <pre id="job-log">ログを選択してください。</pre>
+        </div>
+      </section>
+
+      <section id="view-auth" class="panel">
+        <h2>認証</h2>
+        <div class="card">
+          <div class="grid two">
+            <input id="username" placeholder="ユーザー名" value="admin" />
+            <input id="password" placeholder="パスワード" type="password" />
+          </div>
+          <div class="toolbar">
+            <button id="login-btn">ログイン</button>
+            <button id="logout-btn" class="ghost">ログアウト</button>
+            <span id="auth-msg" class="msg"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
