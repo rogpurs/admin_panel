@@ -3,171 +3,162 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>管理パネル</title>
+  <title>Server Control Panel</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="aurora"></div>
-  <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <h1>管理パネル</h1>
-        <p>PROJECT OPS</p>
+  <div class="app-shell">
+    <aside class="side-nav">
+      <div class="logo-block">
+        <h1>Control</h1>
+        <p>finance-pro.space</p>
       </div>
-      <nav>
-        <button class="menu active" data-view="dashboard">ダッシュボード</button>
-        <button class="menu" data-view="projects">プロジェクト管理</button>
-        <button class="menu" data-view="jobs">ジョブログ</button>
-        <button class="menu" data-view="terminal">オンラインターミナル</button>
-        <button class="menu" data-view="help">使い方</button>
-        <button class="menu" data-view="auth">ログイン</button>
-      </nav>
-      <div class="sidebar-foot">
-        <small id="feature-flags">AI: - / Terminal: -</small>
-      </div>
+      <button class="nav-btn active" data-view="dashboard">ダッシュボード</button>
+      <button class="nav-btn" data-view="projects">サイト管理</button>
+      <button class="nav-btn" data-view="jobs">ジョブ履歴</button>
+      <button class="nav-btn" data-view="terminal">ターミナル</button>
+      <button class="nav-btn" data-view="help">ヘルプ</button>
+      <button class="nav-btn" data-view="auth">ログイン</button>
+      <div class="side-foot" id="feature-flags">AI: - / Terminal: -</div>
     </aside>
 
-    <main class="content">
-      <section id="view-dashboard" class="panel active">
-        <h2>ラズパイ モニター</h2>
-        <div class="toolbar">
-          <button id="refresh-monitor" class="ghost">更新</button>
-          <span id="monitor-msg" class="msg"></span>
+    <main class="main-pane">
+      <header class="top-bar">
+        <div>
+          <h2 id="top-title">ダッシュボード</h2>
+          <p id="top-sub">状態を確認して、すぐに操作できます。</p>
+        </div>
+        <div class="top-actions">
+          <button id="refresh-monitor" class="ghost">モニター更新</button>
+          <button id="refresh-projects" class="ghost">サイト再取得</button>
+          <button id="refresh-jobs" class="ghost">ジョブ再取得</button>
+        </div>
+      </header>
+
+      <section id="view-dashboard" class="view active">
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <h3>CPU</h3>
+            <div class="meter"><div id="meter-cpu"></div></div>
+            <p id="kpi-cpu">-</p>
+          </article>
+          <article class="kpi-card">
+            <h3>メモリ</h3>
+            <div class="meter"><div id="meter-mem"></div></div>
+            <p id="kpi-mem">-</p>
+          </article>
+          <article class="kpi-card">
+            <h3>ディスク</h3>
+            <div class="meter"><div id="meter-disk"></div></div>
+            <p id="kpi-disk">-</p>
+          </article>
+          <article class="kpi-card">
+            <h3>サービス</h3>
+            <p id="kpi-services">-</p>
+          </article>
         </div>
 
-        <div class="gauge-grid">
-          <article class="card gauge-card">
-            <h3>メモリ使用率</h3>
-            <div class="gauge" id="gauge-memory" style="--p:0"><span id="gauge-memory-text">0%</span></div>
-          </article>
-          <article class="card gauge-card">
-            <h3>ディスク使用率</h3>
-            <div class="gauge" id="gauge-disk" style="--p:0"><span id="gauge-disk-text">0%</span></div>
-          </article>
-          <article class="card gauge-card">
-            <h3>CPUロード目安</h3>
-            <div class="gauge" id="gauge-cpu" style="--p:0"><span id="gauge-cpu-text">0%</span></div>
-          </article>
+        <div class="panel-grid">
+          <article class="panel-card"><h3>ホスト情報</h3><pre id="mon-host">-</pre></article>
+          <article class="panel-card"><h3>CPU詳細</h3><pre id="mon-cpu">-</pre></article>
+          <article class="panel-card"><h3>メモリ詳細</h3><pre id="mon-mem">-</pre></article>
+          <article class="panel-card"><h3>ディスク詳細</h3><pre id="mon-disk">-</pre></article>
+          <article class="panel-card"><h3>サービス状態</h3><pre id="mon-svc">-</pre></article>
+          <article class="panel-card"><h3>件数</h3><pre id="mon-count">-</pre></article>
         </div>
-
-        <div class="cards">
-          <article class="card"><h3>ホスト</h3><pre id="mon-host">-</pre></article>
-          <article class="card"><h3>CPU</h3><pre id="mon-cpu">-</pre></article>
-          <article class="card"><h3>メモリ</h3><pre id="mon-mem">-</pre></article>
-          <article class="card"><h3>ディスク</h3><pre id="mon-disk">-</pre></article>
-          <article class="card"><h3>サービス状態</h3><pre id="mon-svc">-</pre></article>
-          <article class="card"><h3>件数</h3><pre id="mon-count">-</pre></article>
-        </div>
+        <p class="note" id="monitor-msg"></p>
       </section>
 
-      <section id="view-projects" class="panel">
-        <h2>プロジェクト管理</h2>
-
-        <div class="card">
-          <div class="toolbar between">
-            <h3>新規作成 / 編集</h3>
+      <section id="view-projects" class="view">
+        <div class="panel-card">
+          <div class="row between">
+            <h3>サイト登録 / 編集</h3>
             <button id="add-main-btn" class="ghost">メインドメインを追加</button>
           </div>
-          <p class="hint">作成すると自動で初期構築を開始し、対象ドメインには「準備中」画面を表示します。</p>
           <input id="editingId" type="hidden" />
-          <div class="grid">
-            <input id="name" placeholder="表示名 (例: 貯金アプリ)" />
-            <input id="slug" placeholder="slug (例: chokin-app)" />
-            <input id="domain" placeholder="domain (例: chokin.finance-pro.space)" />
-            <input id="repoUrl" placeholder="Git URL (https://github.com/... または git@...)" />
+          <div class="form-grid">
+            <input id="name" placeholder="表示名" />
+            <input id="slug" placeholder="slug (例: my-app)" />
+            <input id="domain" placeholder="domain (例: my.finance-pro.space)" />
+            <input id="repoUrl" placeholder="Git URL" />
             <input id="branch" placeholder="branch" value="main" />
-            <input id="port" placeholder="port (例: 3201)" type="number" />
-            <input id="serviceName" placeholder="service名 (任意, 例: chokin-app.service)" />
+            <input id="port" placeholder="port" type="number" />
+            <input id="serviceName" placeholder="service名 (任意)" />
           </div>
-          <div class="toolbar">
+          <div class="row">
             <button id="create-btn">作成（自動初期構築）</button>
             <button id="save-btn" class="ghost">更新保存</button>
-            <button id="clear-form-btn" class="ghost">入力クリア</button>
-            <span id="project-msg" class="msg"></span>
+            <button id="clear-form-btn" class="ghost">クリア</button>
+            <span class="note" id="project-msg"></span>
           </div>
         </div>
 
-        <div class="card">
-          <div class="toolbar between">
-            <h3>プロジェクト一覧</h3>
-            <button id="refresh-projects" class="ghost">再取得</button>
-          </div>
+        <div class="panel-card">
+          <h3>サイト一覧</h3>
           <div id="projects"></div>
         </div>
       </section>
 
-      <section id="view-jobs" class="panel">
-        <h2>ジョブログ</h2>
-        <div class="card">
-          <div class="toolbar between">
-            <h3>ジョブ一覧</h3>
-            <button id="refresh-jobs" class="ghost">再取得</button>
-          </div>
+      <section id="view-jobs" class="view">
+        <div class="panel-card">
+          <h3>ジョブ一覧</h3>
           <div id="jobs"></div>
         </div>
-        <div class="card">
+        <div class="panel-card">
           <h3>ログ詳細</h3>
           <pre id="job-log">ログを選択してください。</pre>
         </div>
       </section>
 
-      <section id="view-terminal" class="panel">
-        <h2>オンラインターミナル</h2>
-        <div class="card">
-          <p class="hint">`cd`はセッション内で保持されます。危険なコマンドはブロックされます。</p>
-          <div class="toolbar">
-            <span class="msg">現在のディレクトリ:</span>
-            <code id="terminal-cwd">-</code>
+      <section id="view-terminal" class="view">
+        <div class="panel-card">
+          <div class="row between">
+            <h3>Web Terminal</h3>
+            <span id="terminal-cwd" class="cwd">-</span>
           </div>
-          <div id="terminal-project-quick" class="toolbar"></div>
-          <div class="toolbar">
-            <input id="terminal-command" placeholder="例: ls -la" />
-            <button id="terminal-run-btn">実行</button>
-          </div>
-          <div class="toolbar">
-            <span id="terminal-msg" class="msg"></span>
-          </div>
-          <div class="terminal-window">
+          <div id="terminal-project-quick" class="row wrap"></div>
+          <div class="terminal-box">
             <div class="terminal-head">
-              <span class="dot red"></span>
-              <span class="dot yellow"></span>
-              <span class="dot green"></span>
-              <span class="title">Terminal</span>
+              <span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+              <span class="title">ssh session</span>
             </div>
-            <pre id="terminal-output"></pre>
+            <div id="terminal-output" class="terminal-output"></div>
+            <div class="terminal-input-row">
+              <span id="terminal-prompt" class="prompt">user@host:~$</span>
+              <input id="terminal-command" class="terminal-input" placeholder="コマンドを入力して Enter" />
+              <button id="terminal-run-btn">実行</button>
+            </div>
           </div>
+          <p class="note" id="terminal-msg"></p>
         </div>
       </section>
 
-      <section id="view-help" class="panel">
-        <h2>使い方ガイド</h2>
-        <div class="card">
-          <h3>よくあるエラーと対処</h3>
+      <section id="view-help" class="view">
+        <div class="panel-card">
+          <h3>クイックガイド</h3>
           <ul>
-            <li><strong>project repo not found</strong>: 先に `初期構築` を実行してください。</li>
-            <li><strong>Cannot find module</strong>: 依存が未導入です。最新版では自動 `npm ci` 済み。</li>
-            <li><strong>Remote branch main not found</strong>: 自動で `main/master` 判定します。</li>
-            <li><strong>502</strong>: upstream落ち。対象serviceの状態確認が必要。</li>
+            <li>サイト作成後は自動で初期構築を開始します。</li>
+            <li>作成中は対象ドメインに「準備中」画面を返します。</li>
+            <li>削除はディレクトリ・service・nginx設定を完全削除します。</li>
+            <li>管理パネル更新は下のボタンで実行できます。</li>
           </ul>
-          <div class="toolbar">
+          <div class="row">
             <button id="self-update-btn" class="ghost">管理パネルをアップデート</button>
-            <span id="self-update-msg" class="msg"></span>
+            <span id="self-update-msg" class="note"></span>
           </div>
         </div>
       </section>
 
-      <section id="view-auth" class="panel">
-        <h2>認証</h2>
-        <div class="card">
-          <div class="grid two">
-            <input id="username" placeholder="ユーザー名" value="admin" />
-            <input id="password" placeholder="パスワード" type="password" />
-          </div>
-          <div class="toolbar">
+      <section id="view-auth" class="view">
+        <div class="panel-card narrow">
+          <h3>ログイン</h3>
+          <input id="username" placeholder="ユーザー名" value="admin" />
+          <input id="password" placeholder="パスワード" type="password" />
+          <div class="row">
             <button id="login-btn">ログイン</button>
             <button id="logout-btn" class="ghost">ログアウト</button>
-            <span id="auth-msg" class="msg"></span>
           </div>
+          <p class="note" id="auth-msg"></p>
         </div>
       </section>
     </main>
@@ -185,10 +176,10 @@
     </div>
     <div id="chat-log" class="chat-log"></div>
     <div class="chat-input">
-      <textarea id="chat-question" placeholder="ログやプロジェクト状況に基づいて、次の一手を相談..." rows="3"></textarea>
-      <div class="toolbar">
+      <textarea id="chat-question" rows="3" placeholder="運用の相談を入力"></textarea>
+      <div class="row">
         <button id="chat-send">送信</button>
-        <span id="chat-usage" class="msg"></span>
+        <span id="chat-usage" class="note"></span>
       </div>
     </div>
   </section>

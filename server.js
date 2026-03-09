@@ -668,7 +668,7 @@ app.get('/api/terminal/history', auth, (req, res) => {
   res.json({ cwd: state.cwd, prompt: promptFor(state.username, state.cwd), history: state.history });
 });
 
-app.get('*', (_req, res) => {
+app.get(/.*/, (_req, res) => {
   res.sendFile(path.join(baseDir, 'public', 'index.html'));
 });
 
