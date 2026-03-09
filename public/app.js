@@ -38,8 +38,8 @@ const setGauge = (id, textId, percent, suffix = '%') => {
   const value = Math.max(0, Math.min(100, Number(percent || 0)));
   const gauge = el(id);
   const text = el(textId);
-  gauge.style.setProperty('--p', value.toFixed(2));
-  text.textContent = `${value.toFixed(1)}${suffix}`;
+  if (gauge) gauge.style.setProperty('--p', value.toFixed(2));
+  if (text) text.textContent = `${value.toFixed(1)}${suffix}`;
 };
 
 const fillProjectForm = (p) => {
@@ -66,6 +66,35 @@ const clearProjectForm = () => {
 };
 
 const projectMap = new Map();
+const jobMap = new Map();
+
+const refreshProjectSelectors = (projects) => {
+  const targets = [el('terminal-project-id'), el('chat-project-id')];
+  targets.forEach((target) => {
+    const current = target.value;
+    target.innerHTML = '<option value="">(未選択)</option>';
+    projects.forEach((p) => {
+      const opt = document.createElement('option');
+      opt.value = String(p.id);
+      opt.textContent = `${p.name} (${p.slug})`;
+      target.appendChild(opt);
+    });
+    target.value = current;
+  });
+};
+
+const refreshJobSelector = (jobs) => {
+  const target = el('chat-job-id');
+  const current = target.value;
+  target.innerHTML = '<option value="">(未選択)</option>';
+  jobs.forEach((j) => {
+    const opt = document.createElement('option');
+    opt.value = String(j.id);
+    opt.textContent = `#${j.id} ${j.type}/${j.status}`;
+    target.appendChild(opt);
+  });
+  target.value = current;
+};
 
 const renderProjects = (projects) => {
   const root = el('projects');
@@ -74,6 +103,7 @@ const renderProjects = (projects) => {
 
   if (!projects.length) {
     root.innerHTML = '<p class="msg">プロジェクトがまだありません。</p>';
+    refreshProjectSelectors([]);
     return;
   }
 
@@ -97,16 +127,23 @@ const renderProjects = (projects) => {
     `;
     root.appendChild(d);
   });
+
+  refreshProjectSelectors(projects);
 };
 
 const renderJobs = (jobs) => {
   const root = el('jobs');
   root.innerHTML = '';
+  jobMap.clear();
+
   if (!jobs.length) {
     root.innerHTML = '<p class="msg">ジョブはまだありません。</p>';
+    refreshJobSelector([]);
     return;
   }
+
   jobs.forEach((j) => {
+    jobMap.set(String(j.id), j);
     const d = document.createElement('div');
     d.className = 'item';
     d.innerHTML = `
@@ -116,6 +153,8 @@ const renderJobs = (jobs) => {
     `;
     root.appendChild(d);
   });
+
+  refreshJobSelector(jobs);
 };
 
 const renderMonitor = (m) => {
@@ -186,6 +225,14 @@ const loadMonitor = async () => {
   renderMonitor(data);
 };
 
+const loadConfig = async () => {
+  const cfg = await request('/api/config');
+  el('feature-flags').textContent = `AI: ${cfg.aiEnabled ? 'ON' : 'OFF'} / Terminal: ${cfg.terminalEnabled ? 'ON' : 'OFF'}`;
+  if (!cfg.terminalEnabled) {
+    el('terminal-msg').textContent = 'TERMINAL_ENABLED=false のため実行不可';
+  }
+};
+
 el('login-btn').onclick = async () => {
   try {
     const r = await request('/api/login', {
@@ -195,7 +242,7 @@ el('login-btn').onclick = async () => {
     token = r.token;
     localStorage.setItem('admin_token', token);
     el('auth-msg').textContent = 'ログイン成功';
-    await Promise.all([loadProjects(), loadJobs(), loadMonitor()]);
+    await Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig()]);
     showView('dashboard');
   } catch (e) {
     el('auth-msg').textContent = e.message;
@@ -256,6 +303,26 @@ el('refresh-projects').onclick = () => loadProjects().catch((e) => (el('project-
 el('refresh-jobs').onclick = () => loadJobs().catch((e) => (el('job-log').textContent = e.message));
 el('refresh-monitor').onclick = () => loadMonitor().catch((e) => (el('monitor-msg').textContent = e.message));
 
+el('terminal-run-btn').onclick = async () => {
+  try {
+    const payload = {
+      projectId: el('terminal-project-id').value || undefined,
+      command: el('terminal-command').value
+    };
+    const r = await request('/api/terminal/exec', { method: 'POST', body: JSON.stringify(payload) });
+    el('terminal-msg').textContent = `exit=${r.code} / ${r.timeout ? 'TIMEOUT' : 'OK'} / ${r.durationMs}ms`;
+    el('terminal-output').textContent = [
+      `cwd: ${r.cwd}`,
+      '--- stdout ---',
+      r.stdout || '(empty)',
+      '--- stderr ---',
+      r.stderr || '(empty)'
+    ].join('\n');
+  } catch (e) {
+    el('terminal-msg').textContent = e.message;
+  }
+};
+
 document.body.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('button[data-action]');
   if (!btn) return;
@@ -305,8 +372,45 @@ document.body.addEventListener('click', async (ev) => {
   }
 });
 
+const chatWidget = el('chat-widget');
+const chatToggle = el('chat-toggle');
+const chatClose = el('chat-close');
+
+const addChatBubble = (role, text) => {
+  const item = document.createElement('div');
+  item.className = `bubble ${role}`;
+  item.textContent = text;
+  el('chat-log').appendChild(item);
+  el('chat-log').scrollTop = el('chat-log').scrollHeight;
+};
+
+chatToggle.onclick = () => chatWidget.classList.toggle('hidden');
+chatClose.onclick = () => chatWidget.classList.add('hidden');
+
+el('chat-send').onclick = async () => {
+  const question = el('chat-question').value.trim();
+  if (!question) return;
+
+  const projectId = el('chat-project-id').value || undefined;
+  const jobId = el('chat-job-id').value || undefined;
+
+  addChatBubble('user', question);
+  el('chat-question').value = '';
+
+  try {
+    const r = await request('/api/ai/advice', {
+      method: 'POST',
+      body: JSON.stringify({ question, projectId, jobId })
+    });
+    addChatBubble('assistant', r.answer);
+    el('chat-usage').textContent = `tokens: ${r.usage.total_tokens} (p:${r.usage.prompt_tokens} / c:${r.usage.completion_tokens})`;
+  } catch (e) {
+    addChatBubble('assistant', `エラー: ${e.message}`);
+  }
+};
+
 if (token) {
-  Promise.all([loadProjects(), loadJobs(), loadMonitor()]).catch(() => {
+  Promise.all([loadProjects(), loadJobs(), loadMonitor(), loadConfig()]).catch(() => {
     el('auth-msg').textContent = '再ログインしてください';
   });
 }

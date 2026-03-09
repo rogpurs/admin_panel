@@ -6,10 +6,19 @@ const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 
 const app = express();
+
 const PORT = Number(process.env.PORT || 3100);
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'change-me-strong-password';
 const APPS_ROOT = process.env.APPS_ROOT || '/home/s55mz/apps';
+
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const AI_MAX_TOKENS = Number(process.env.AI_MAX_TOKENS || 280);
+
+const TERMINAL_ENABLED = process.env.TERMINAL_ENABLED === 'true';
+const TERMINAL_TIMEOUT_MS = Number(process.env.TERMINAL_TIMEOUT_MS || 20000);
+const TERMINAL_MAX_OUTPUT = Number(process.env.TERMINAL_MAX_OUTPUT || 12000);
 
 const baseDir = __dirname;
 const dataDir = path.join(baseDir, 'data');
@@ -94,9 +103,7 @@ const loadStore = () => {
   }
   store = ensureStoreShape(store);
   const changed = ensureMainProject(store);
-  if (changed) {
-    fs.writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8');
-  }
+  if (changed) saveStore(store);
   return store;
 };
 
@@ -186,10 +193,7 @@ const runScriptJob = (project, type, extraArgs = []) => {
 
   const child = spawn('bash', [scriptPath, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      APPS_ROOT
-    }
+    env: { ...process.env, APPS_ROOT }
   });
 
   child.stdout.on('data', (buf) => logStream.write(buf));
@@ -207,11 +211,210 @@ const runScriptJob = (project, type, extraArgs = []) => {
   return job;
 };
 
-app.use(express.json({ limit: '100kb' }));
+const tailText = (text, maxChars) => {
+  if (!text) return '';
+  if (text.length <= maxChars) return text;
+  return text.slice(text.length - maxChars);
+};
+
+const buildAiContext = ({ question, projectId, jobId }) => {
+  const store = loadStore();
+  const ctx = {
+    question: String(question || '').slice(0, 1200),
+    now: nowIso(),
+    host: {
+      hostname: os.hostname(),
+      uptime: safeExec('uptime', ['-p']) || '',
+      loadavg: os.loadavg()
+    },
+    project: null,
+    job: null,
+    jobLogTail: ''
+  };
+
+  if (projectId) {
+    const project = store.projects.find((p) => p.id === Number(projectId));
+    if (project) {
+      ctx.project = {
+        id: project.id,
+        name: project.name,
+        slug: project.slug,
+        domain: project.domain,
+        repoUrl: project.repoUrl,
+        branch: project.branch,
+        port: project.port,
+        serviceName: project.serviceName,
+        status: makeProjectStatus(project)
+      };
+    }
+  }
+
+  if (jobId) {
+    const job = store.jobs.find((j) => j.id === Number(jobId));
+    if (job) {
+      ctx.job = {
+        id: job.id,
+        projectId: job.projectId,
+        projectSlug: job.projectSlug,
+        type: job.type,
+        status: job.status,
+        startedAt: job.startedAt,
+        finishedAt: job.finishedAt,
+        exitCode: job.exitCode
+      };
+      if (job.logFile && fs.existsSync(job.logFile)) {
+        const raw = fs.readFileSync(job.logFile, 'utf-8');
+        ctx.jobLogTail = tailText(raw, 2500);
+      }
+    }
+  }
+
+  return ctx;
+};
+
+const askOpenAI = async (ctx) => {
+  if (!OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY が未設定です');
+  }
+
+  const systemPrompt = [
+    'You are a pragmatic DevOps assistant for Raspberry Pi deployment.',
+    'Think in English, answer in Japanese.',
+    'Keep output concise and actionable.',
+    'Use short bullet points and concrete commands when useful.',
+    'If root cause is uncertain, say assumptions explicitly.',
+    'Do not mention internal chain-of-thought.'
+  ].join(' ');
+
+  const userPrompt = [
+    'User question:',
+    ctx.question,
+    '',
+    'Context JSON:',
+    JSON.stringify(ctx)
+  ].join('\n');
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature: 0.2,
+      max_tokens: AI_MAX_TOKENS,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    const txt = await response.text();
+    throw new Error(`OpenAI API error: ${response.status} ${txt.slice(0, 400)}`);
+  }
+
+  const json = await response.json();
+  const message = json.choices?.[0]?.message?.content?.trim() || '回答を取得できませんでした。';
+  const usage = json.usage || {};
+  return {
+    message,
+    usage: {
+      prompt_tokens: usage.prompt_tokens || 0,
+      completion_tokens: usage.completion_tokens || 0,
+      total_tokens: usage.total_tokens || 0
+    }
+  };
+};
+
+const executeTerminalCommand = ({ command, projectId }) => {
+  if (!TERMINAL_ENABLED) {
+    throw new Error('terminal is disabled');
+  }
+
+  const cmd = String(command || '').trim();
+  if (!cmd) throw new Error('command is required');
+
+  const blockedPatterns = [
+    /rm\s+-rf\s+\/$/i,
+    /reboot/i,
+    /shutdown/i,
+    /mkfs/i,
+    /:\(\)\s*\{\s*:\|:&\s*\};:/,
+    /dd\s+if=.*of=\/dev\//i
+  ];
+  if (blockedPatterns.some((re) => re.test(cmd))) {
+    throw new Error('危険なコマンドは実行できません');
+  }
+
+  const store = loadStore();
+  let cwd = APPS_ROOT;
+  if (projectId) {
+    const project = store.projects.find((p) => p.id === Number(projectId));
+    if (project) cwd = path.join(APPS_ROOT, project.slug);
+  }
+
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    const child = spawn('/bin/bash', ['-lc', cmd], { cwd });
+
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
+
+    const timer = setTimeout(() => {
+      killed = true;
+      child.kill('SIGKILL');
+    }, TERMINAL_TIMEOUT_MS);
+
+    child.stdout.on('data', (buf) => {
+      stdout += buf.toString('utf-8');
+      if (stdout.length > TERMINAL_MAX_OUTPUT) {
+        stdout = stdout.slice(stdout.length - TERMINAL_MAX_OUTPUT);
+      }
+    });
+
+    child.stderr.on('data', (buf) => {
+      stderr += buf.toString('utf-8');
+      if (stderr.length > TERMINAL_MAX_OUTPUT) {
+        stderr = stderr.slice(stderr.length - TERMINAL_MAX_OUTPUT);
+      }
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({
+        code,
+        timeout: killed,
+        durationMs: Date.now() - start,
+        cwd,
+        stdout,
+        stderr
+      });
+    });
+  });
+};
+
+app.use(express.json({ limit: '300kb' }));
 app.use(express.static(path.join(baseDir, 'public')));
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', app: 'admin-panel', now: nowIso() });
+});
+
+app.get('/api/config', auth, (_req, res) => {
+  res.json({
+    aiEnabled: Boolean(OPENAI_API_KEY),
+    terminalEnabled: TERMINAL_ENABLED,
+    openaiModel: OPENAI_MODEL
+  });
 });
 
 app.post('/api/login', (req, res) => {
@@ -263,6 +466,7 @@ app.post('/api/projects/bootstrap-main', auth, (req, res) => {
     createdAt: nowIso(),
     updatedAt: nowIso()
   };
+
   store.projects.push(project);
   saveStore(store);
   res.status(201).json({ ...project, status: makeProjectStatus(project) });
@@ -351,9 +555,7 @@ app.put('/api/projects/:id', auth, (req, res) => {
     return;
   }
 
-  const duplicated = store.projects.some((p, i) =>
-    i !== idx && (p.slug === next.slug || p.domain === next.domain || p.port === next.port)
-  );
+  const duplicated = store.projects.some((p, i) => i !== idx && (p.slug === next.slug || p.domain === next.domain || p.port === next.port));
   if (duplicated) {
     res.status(409).json({ error: 'slug/domain/port が重複しています' });
     return;
@@ -478,6 +680,34 @@ app.get('/api/monitor', auth, (_req, res) => {
       runningJobs: store.jobs.filter((j) => j.status === 'running').length
     }
   });
+});
+
+app.post('/api/ai/advice', auth, async (req, res) => {
+  try {
+    const { question, projectId, jobId } = req.body || {};
+    if (!question || String(question).trim().length < 2) {
+      res.status(400).json({ error: '質問を入力してください' });
+      return;
+    }
+    const ctx = buildAiContext({ question, projectId, jobId });
+    const result = await askOpenAI(ctx);
+    res.json({
+      answer: result.message,
+      usage: result.usage
+    });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : 'AI相談に失敗しました' });
+  }
+});
+
+app.post('/api/terminal/exec', auth, async (req, res) => {
+  try {
+    const { command, projectId } = req.body || {};
+    const result = await executeTerminalCommand({ command, projectId });
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : 'terminal execution failed' });
+  }
 });
 
 app.get('*', (_req, res) => {

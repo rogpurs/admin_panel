@@ -5,15 +5,13 @@ Raspberry Pi向けの管理パネル（MVP）です。
 ## 実装済み
 
 - 日本語UI + サイドメニュー
-- ログイン / ログアウト
 - プロジェクト作成 / 編集 / 削除
-- メインドメインをプロジェクト化（ボタンで追加）
-- プロジェクトごとの状態表示（service/dir/git）
-- 初期構築ジョブ（provision）
-- アップデートジョブ（deploy）
-- 削除ジョブ（remove）
+- メインドメインをプロジェクト化（ボタン追加）
+- 状態表示（service/dir/git）
 - ジョブログ表示
-- ラズパイモニター（ゲージ + テキスト）
+- ラズパイモニター（ゲージ表示 + 詳細情報）
+- 右下AI相談チャット（OpenAI API）
+- オンラインターミナル（有効時のみ）
 
 ## ローカル起動
 
@@ -33,7 +31,22 @@ npm start
 - `ADMIN_USER` (default: `admin`)
 - `ADMIN_PASSWORD` (default: `change-me-strong-password`)
 - `APPS_ROOT` (default: `/home/s55mz/apps`)
-- `MAIN_PROJECT_ENABLED` (`false`で自動追加無効)
+
+### AIチャット
+
+- `OPENAI_API_KEY` (必須)
+- `OPENAI_MODEL` (default: `gpt-4o-mini`)
+- `AI_MAX_TOKENS` (default: `280`)
+
+### ターミナル
+
+- `TERMINAL_ENABLED` (`true` で有効)
+- `TERMINAL_TIMEOUT_MS` (default: `20000`)
+- `TERMINAL_MAX_OUTPUT` (default: `12000`)
+
+### メインプロジェクト自動追加
+
+- `MAIN_PROJECT_ENABLED` (`false`で無効)
 - `MAIN_PROJECT_DOMAIN` (default: `finance-pro.space`)
 - `MAIN_PROJECT_SLUG` (default: `finance-pro-main`)
 - `MAIN_PROJECT_SERVICE` (default: `finance-pro-main.service`)
@@ -50,10 +63,9 @@ npm start
 - `systemctl daemon-reload / enable / restart / stop`
 - `nginx -t` / `systemctl reload nginx`
 
-そのため、`admin-panel` 実行ユーザーに対して `sudoers` で最小権限を付与してください。
+そのため、`admin-panel` 実行ユーザーに `sudoers` で最小権限を付与してください。
 
-## 補足
+## 注意
 
-- ブランチは `main` がなくても `master` を自動判定します。
-- プロジェクト削除時は `?purgeDir=1` でディレクトリを `.deleted.<timestamp>` へ退避します。
-- MVPのため、セッションはメモリ保持（再起動で失効）です。
+- AI回答は補助です。実行前にコマンドを必ず確認してください。
+- オンラインターミナルは強力なので、公開運用時はIP制限・2FA・監査ログを必須にしてください。

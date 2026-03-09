@@ -7,21 +7,23 @@
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <div class="aurora"></div>
   <div class="layout">
     <aside class="sidebar">
       <div class="brand">
         <h1>管理パネル</h1>
-        <p>finance-pro.space</p>
+        <p>PROJECT OPS</p>
       </div>
       <nav>
         <button class="menu active" data-view="dashboard">ダッシュボード</button>
         <button class="menu" data-view="projects">プロジェクト管理</button>
         <button class="menu" data-view="jobs">ジョブログ</button>
+        <button class="menu" data-view="terminal">オンラインターミナル</button>
         <button class="menu" data-view="help">使い方</button>
         <button class="menu" data-view="auth">ログイン</button>
       </nav>
       <div class="sidebar-foot">
-        <small>Admin Panel MVP</small>
+        <small id="feature-flags">AI: - / Terminal: -</small>
       </div>
     </aside>
 
@@ -66,13 +68,13 @@
             <h3>新規作成 / 編集</h3>
             <button id="add-main-btn" class="ghost">メインドメインを追加</button>
           </div>
-          <p class="hint">`初期構築` でディレクトリ作成・Git clone・systemd/nginx反映を行います。`アップデート` は pull/build/restart を実行します。</p>
+          <p class="hint">`初期構築` でディレクトリ作成・Git clone・systemd/nginx反映、`アップデート` でpull/build/restartを実行します。</p>
           <input id="editingId" type="hidden" />
           <div class="grid">
             <input id="name" placeholder="表示名 (例: 貯金アプリ)" />
             <input id="slug" placeholder="slug (例: chokin-app)" />
             <input id="domain" placeholder="domain (例: chokin.finance-pro.space)" />
-            <input id="repoUrl" placeholder="Git URL (https://github.com/... または git@... )" />
+            <input id="repoUrl" placeholder="Git URL (https://github.com/... または git@...)" />
             <input id="branch" placeholder="branch" value="main" />
             <input id="port" placeholder="port (例: 3201)" type="number" />
             <input id="serviceName" placeholder="service名 (任意, 例: chokin-app.service)" />
@@ -109,15 +111,32 @@
         </div>
       </section>
 
+      <section id="view-terminal" class="panel">
+        <h2>オンラインターミナル</h2>
+        <div class="card">
+          <p class="hint">危険なコマンドはブロックされます。`TERMINAL_ENABLED=true` の時のみ実行できます。</p>
+          <div class="grid two">
+            <select id="terminal-project-id"></select>
+            <input id="terminal-command" placeholder="例: ls -la /home/s55mz/apps" />
+          </div>
+          <div class="toolbar">
+            <button id="terminal-run-btn">実行</button>
+            <span id="terminal-msg" class="msg"></span>
+          </div>
+          <pre id="terminal-output">ここに出力が表示されます。</pre>
+        </div>
+      </section>
+
       <section id="view-help" class="panel">
         <h2>使い方ガイド</h2>
         <div class="card">
           <h3>よくあるエラーと対処</h3>
           <ul>
-            <li><strong>Host key verification failed</strong>: repo URLをHTTPSに変更するか、ラズパイにGitHub SSH鍵を登録。</li>
-            <li><strong>Remote branch main not found</strong>: ブランチを `master` に変更。未指定なら自動で `main/master` を判定。</li>
-            <li><strong>sudo権限エラー</strong>: `scripts/*.sh` 実行用に `sudoers` の最小権限を付与。</li>
-            <li><strong>502</strong>: 対象サービス停止、または nginx 設定競合。ジョブログと `systemctl status` を確認。</li>
+            <li><strong>project repo not found</strong>: 先に `初期構築` を実行してください。</li>
+            <li><strong>Host key verification failed</strong>: repo URLをHTTPSに変更、またはラズパイへSSH鍵登録。</li>
+            <li><strong>Remote branch main not found</strong>: `master` を指定、または自動判定を利用。</li>
+            <li><strong>sudo権限エラー</strong>: `scripts/*.sh` 実行用の `sudoers` 設定が必要。</li>
+            <li><strong>502</strong>: 対象サービス停止 or nginx設定競合。ジョブログ + `systemctl status` を確認。</li>
           </ul>
         </div>
       </section>
@@ -138,6 +157,26 @@
       </section>
     </main>
   </div>
+
+  <button id="chat-toggle" class="chat-toggle">AI相談</button>
+  <section id="chat-widget" class="chat-widget hidden">
+    <header>
+      <strong>AI相談 (gpt-4o-mini)</strong>
+      <button id="chat-close" class="ghost">閉じる</button>
+    </header>
+    <div class="chat-controls">
+      <select id="chat-project-id"></select>
+      <select id="chat-job-id"></select>
+    </div>
+    <div id="chat-log" class="chat-log"></div>
+    <div class="chat-input">
+      <textarea id="chat-question" placeholder="ログやプロジェクト状況に基づいて、次の一手を相談..." rows="3"></textarea>
+      <div class="toolbar">
+        <button id="chat-send">送信</button>
+        <span id="chat-usage" class="msg"></span>
+      </div>
+    </div>
+  </section>
 
   <script src="/app.js"></script>
 </body>
